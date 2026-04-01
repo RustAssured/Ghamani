@@ -653,31 +653,47 @@ function joinSession() {
 }
 
 // ── ABLY ─────────────────────────────────────────────────────────
+let pingInterval = null;
+let connected = false;
+
 function connectAbly() {
   if (ably) { try { ably.close(); } catch(e){} }
+  connected = false;
+  clearInterval(pingInterval);
 
   ably = new Ably.Realtime({ key: ABLY_KEY, clientId: myRole + '_' + Date.now() });
   channel = ably.channels.get('gamanhi-' + sessionCode);
 
   ably.connection.on('connected', () => {
+    hostStatus.textContent = myRole === 'host' ? 'wachten op verbinding…' : 'verbinden…';
+
     channel.subscribe('state', onRemoteState);
     channel.subscribe('ping', onPing);
 
-    if (myRole === 'guest') {
-      channel.publish('ping', { role: 'guest' });
-    }
+    // Both sides ping repeatedly until connected
+    pingInterval = setInterval(() => {
+      if (!connected) channel.publish('ping', { role: myRole });
+    }, 1500);
+    // First ping immediately
+    channel.publish('ping', { role: myRole });
   });
 
   ably.connection.on('failed', () => {
-    hostStatus.textContent = 'verbinding mislukt. controleer je API key.';
+    hostStatus.textContent = 'verbinding mislukt — controleer je API key.';
+  });
+
+  ably.connection.on('disconnected', () => {
+    if (connected) hostStatus.textContent = 'verbinding verbroken…';
   });
 }
 
 function onPing(msg) {
-  if (myRole === 'host' && msg.data.role === 'guest') {
-    channel.publish('ping', { role: 'host' });
-    showConnected();
-  } else if (myRole === 'guest' && msg.data.role === 'host') {
+  if (connected) return;
+  const theirRole = msg.data.role;
+  // We need to hear from the *other* role
+  if (theirRole !== myRole) {
+    connected = true;
+    clearInterval(pingInterval);
     showConnected();
   }
 }
